@@ -1,99 +1,120 @@
 import numpy as np
 import pyaudio
 import time
+import threading
 
 class SaoMeoEngine:
     def __init__(self):
         self.sample_rate = 48000
         self.p = pyaudio.PyAudio()
-        self.volume = 0.8
+        self.volume = 0.6
         
         self.target_freqs = set()
         self.envelopes = {} 
         self.phases = {}
-        self.lfo_phase = 0 
+        self.note_counters = {} 
         
-        self.attack_samples = int(self.sample_rate * 0.15) 
-        self.release_samples = int(self.sample_rate * 0.3) 
+        self.lfo_phase = 0 
+        self.lock = threading.Lock()
+        
+        self.attack_samples = int(self.sample_rate * 0.1)
+        self.release_samples = int(self.sample_rate * 0.2)
         
         self.stream = self.p.open(
-            format=pyaudio.paFloat32,
-            channels=1,
-            rate=self.sample_rate,
-            output=True,
-            stream_callback=self.callback,
-            frames_per_buffer=1024
+            format = pyaudio.paFloat32,
+            channels = 1,
+            rate = self.sample_rate,
+            output = True,
+            stream_callback = self.callback,
+            frames_per_buffer = 1024
         )
         self.stream.start_stream()
 
     def callback(self, in_data, frame_count, time_info, status):
         dt = 1.0 / self.sample_rate
-        t = np.arange(frame_count) * dt
-        output_signal = np.zeros(frame_count)
+        output_signal = np.zeros(frame_count, dtype=np.float32)
+        local_t_steps = np.arange(frame_count, dtype=np.float32)
         
-        processing_freqs = list(self.envelopes.keys())
-        
-        if not processing_freqs:
-            self.lfo_phase = 0
-            return (output_signal.astype(np.float32), pyaudio.paContinue)
+        with self.lock:
+            processing_freqs = list(self.envelopes.keys())
+            
+            if not processing_freqs:
+                self.lfo_phase = 0
+                return (output_signal, pyaudio.paContinue)
 
-        for freq in processing_freqs:
-            current_env_val = self.envelopes[freq]
-            target_env_val = 1.0 if freq in self.target_freqs else 0.0
-            
-            env_curve = np.zeros(frame_count)
-            
-            if target_env_val > current_env_val: 
-                step = 1.0 / self.attack_samples
-                env_curve = current_env_val + np.arange(1, frame_count + 1) * step
-                env_curve = np.minimum(env_curve, 1.0)
-            else: 
-                step = 1.0 / self.release_samples
-                env_curve = current_env_val - np.arange(1, frame_count + 1) * step
-                env_curve = np.maximum(env_curve, 0.0)
-            
-            self.envelopes[freq] = env_curve[-1]
-            
-            if self.envelopes[freq] <= 0.0 and freq not in self.target_freqs:
-                del self.envelopes[freq]
-                if freq in self.phases: del self.phases[freq]
-                continue 
-            
-            if freq not in self.phases: self.phases[freq] = 0
-            
-            vibrato_speed = 5.0
-            vibrato_depth = 0.01 
-            vibrato = 1.0 + vibrato_depth * np.sin(self.lfo_phase + 2 * np.pi * vibrato_speed * t)
-            
-            self.lfo_phase += 2 * np.pi * vibrato_speed * (frame_count * dt)
+            for freq in processing_freqs:
+                if freq not in self.note_counters: self.note_counters[freq] = 0
+                
+                start_sample = self.note_counters[freq]
+                note_time_samples = start_sample + local_t_steps
+                note_time_seconds = note_time_samples * dt
+                
+                self.note_counters[freq] += frame_count
+                
+                pitch_bend = -8.0 * np.exp(-note_time_seconds * 25.0)
+                current_freq_array = freq + pitch_bend
+                
+                current_env = self.envelopes[freq]
+                target_env = 1.0 if freq in self.target_freqs else 0.0
+                
+                env_curve = np.zeros(frame_count, dtype=np.float32)
+                if target_env > current_env: 
+                    step = 1.0 / self.attack_samples
+                    env_curve = np.minimum(current_env + np.arange(1,frame_count+1)*step, 1.0)
+                else: 
+                    step = 1.0 / self.release_samples
+                    env_curve = np.maximum(current_env - np.arange(1,frame_count+1)*step, 0.0)
+                self.envelopes[freq] = env_curve[-1]
+
+                if self.envelopes[freq] <= 0.0 and freq not in self.target_freqs:
+                    del self.envelopes[freq]
+                    if freq in self.phases: del self.phases[freq]
+                    if freq in self.note_counters: del self.note_counters[freq]
+                    continue 
+
+                if freq not in self.phases: self.phases[freq] = 0.0
+                
+                phase_inc = 2 * np.pi * current_freq_array * dt
+                chunk_phases = self.phases[freq] + np.cumsum(phase_inc)
+                
+                wave = 0.6 * np.sin(chunk_phases)
+                wave += 0.2 * np.sin(chunk_phases * 2)
+                wave += 0.55 * np.sin(chunk_phases * 3)
+                wave += 0.15 * np.sin(chunk_phases * 5)
+
+                vibrato_speed = 2.5
+                
+                delay_time = 0.4 
+                vibrato_fade_in = np.clip((note_time_seconds - delay_time) * 2.0, 0.0, 1.0)
+                
+                lfo_val = np.sin(self.lfo_phase + 2 * np.pi * vibrato_speed * local_t_steps * dt)
+                
+                vibrato_mod = 1.0 + (0.012 * vibrato_fade_in * lfo_val)
+                
+                wave *= vibrato_mod
+                wave *= env_curve
+                
+                swell = 1.0 + 0.1 * np.sin(note_time_seconds * 3.0) * vibrato_fade_in
+                wave *= swell
+                
+                output_signal += wave
+                self.phases[freq] = chunk_phases[-1] % (2 * np.pi)
+
+            self.lfo_phase += 2 * np.pi * 3.5 * (frame_count * dt)
             self.lfo_phase %= 2 * np.pi
 
-            phase_inc = 2 * np.pi * freq * dt
-            chunk_phases = self.phases[freq] + np.cumsum(np.full(frame_count, phase_inc))
-            
-            wave = 1.0 * np.sin(chunk_phases)
-            wave += 0.5 * np.sin(chunk_phases * 2)
-            wave += 0.08 * np.sin(chunk_phases * 3)
-            wave += 0.02 * np.sin(chunk_phases * 4)
-
-            wave *= vibrato
-            wave *= env_curve
-            
-            output_signal += wave
-            
-            self.phases[freq] = chunk_phases[-1] % (2 * np.pi)
-
         output_signal *= self.volume
-        
-        output_signal = np.tanh(output_signal)
+        output_signal = np.tanh(output_signal * 1.2)
         
         return (output_signal.astype(np.float32), pyaudio.paContinue)
 
     def update_notes(self, active_frequencies):
-        self.target_freqs = set(active_frequencies)
-        for freq in self.target_freqs:
-            if freq not in self.envelopes:
-                self.envelopes[freq] = 0.0 
+        with self.lock:
+            self.target_freqs = set(active_frequencies)
+            for freq in self.target_freqs:
+                if freq not in self.envelopes:
+                    self.envelopes[freq] = 0.0
+                    self.note_counters[freq] = 0 
         
     def close(self):
         self.stream.stop_stream()
