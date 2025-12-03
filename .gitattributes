@@ -4,3 +4,4 @@ build/* linguist-vendored
 dist/* linguist-vendored
 docs/* linguist-vendored
 *.tex linguist-vendored
+*.html linguist-vendored
