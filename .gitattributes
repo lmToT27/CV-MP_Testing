@@ -1,2 +1,6 @@
 *.exe filter=lfs diff=lfs merge=lfs -text
 *.pkg filter=lfs diff=lfs merge=lfs -text
+build/* linguist-vendored
+dist/* linguist-vendored
+docs/* linguist-vendored
+*.tex linguist-vendored
