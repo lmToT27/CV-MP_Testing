@@ -1,7 +1,22 @@
 *.exe filter=lfs diff=lfs merge=lfs -text
 *.pkg filter=lfs diff=lfs merge=lfs -text
-build/* linguist-vendored
-dist/* linguist-vendored
-docs/* linguist-vendored
+
+build/** linguist-vendored
+dist/** linguist-vendored
+docs/** linguist-vendored
+__pycache__/** linguist-vendored
+*.egg-info/** linguist-vendored
+
 *.tex linguist-vendored
+*.sty linguist-vendored
+*.cls linguist-vendored
+*.bib linguist-vendored
+*.aux linguist-vendored
+*.log linguist-vendored
+*.toc linguist-vendored
+
 *.html linguist-vendored
+*.css linguist-vendored
+*.xml linguist-vendored
+*.json linguist-vendored
+*.svg linguist-vendored
