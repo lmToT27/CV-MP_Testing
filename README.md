@@ -58,7 +58,7 @@ You don't need to install Python or complex libraries. Simply download and run t
 
 ```bash
 # 1. Clone the repository
-git clone [https://github.com/lmToT27/CV-MP_Testing.git](https://github.com/lmToT27/CV-MP_Testing.git)
+git clone https://github.com/lmToT27/CV-MP_Testing.git
 
 # 2. Navigate to the folder
 cd CV-MP_Testing
